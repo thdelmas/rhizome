@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rhizome — KB graph</title>
+<style>
+  /* committed dark tool page; palette = validated dark categorical steps */
+  :root {
+    --surface-1: #1a1a19;
+    --surface-2: #242423;
+    --line: #33332f;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8a897f;
+    --other: #6b6a63;
+    --accent: #3987e5;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, sans-serif;
+    overflow: hidden; height: 100vh; display: flex;
+  }
+
+  /* ---- left: graph + bottom dock ---- */
+  #left { flex: 1 1 58%; position: relative; min-width: 0; }
+  #graph { position: absolute; inset: 0; }
+  #dock {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+    background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+    border-top: 1px solid var(--line);
+    padding: 8px 12px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  #dockrow1 { display: flex; align-items: center; gap: 10px; position: relative; }
+  #search {
+    width: 230px; padding: 6px 9px;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid #3d3d38; border-radius: 6px; font-size: 13px;
+  }
+  #search:focus { outline: 1px solid var(--accent); }
+  #results {
+    position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: 300px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+    max-height: 45vh; overflow-y: auto; z-index: 3;
+  }
+  #results:empty { display: none; }
+  #results button {
+    display: block; width: 100%; padding: 5px 9px; border: 0; text-align: left;
+    background: transparent; color: var(--text-secondary); font-size: 12.5px;
+    cursor: pointer;
+  }
+  #results button:hover { background: var(--surface-1); }
+  #results .t { color: var(--text-muted); }
+  #ego { display: none; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12.5px; }
+  #ego.on { display: flex; }
+  #ego input[type=range] { width: 90px; accent-color: var(--accent); }
+  #ego button {
+    padding: 4px 9px; border-radius: 6px; border: 1px solid #3d3d38;
+    background: var(--surface-1); color: var(--text-primary); font-size: 12px; cursor: pointer;
+  }
+  #stats { margin-left: auto; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+  #types { display: flex; flex-wrap: wrap; gap: 2px 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--text-secondary);
+    font-size: 12.5px; cursor: pointer;
+  }
+  .chip:hover { background: var(--surface-1); }
+  .chip.off { opacity: 0.32; }
+  .chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .chip .n { color: var(--text-muted); font-size: 11.5px; }
+
+  /* ---- right: reader ---- */
+  #reader {
+    flex: 1 1 42%; min-width: 320px; max-width: 560px;
+    background: var(--surface-2);
+    border-left: 1px solid var(--line);
+    display: flex; flex-direction: column;
+  }
+  #reader header {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 12px 16px 8px; border-bottom: 1px solid var(--line); flex: none;
+  }
+  #reader header .title { font-size: 15px; font-weight: 600; word-break: break-word; }
+  #reader header .obs {
+    margin-left: auto; flex: none; font-size: 12px; color: var(--accent);
+    text-decoration: none; border: 1px solid #3d3d38; border-radius: 6px; padding: 3px 8px;
+  }
+  #reader .path { padding: 6px 16px 0; color: var(--text-muted); font-size: 11.5px; word-break: break-all; flex: none; }
+  #reader article { padding: 10px 16px 24px; overflow-y: auto; font-size: 13.5px; color: var(--text-secondary); }
+  #reader article .empty { color: var(--text-muted); margin-top: 20px; text-align: center; }
+  #reader article h1, #reader article h2, #reader article h3, #reader article h4 {
+    color: var(--text-primary); margin: 14px 0 6px; line-height: 1.3;
+  }
+  #reader article h1 { font-size: 17px; } #reader article h2 { font-size: 15px; }
+  #reader article h3, #reader article h4 { font-size: 13.5px; }
+  #reader article p { margin: 7px 0; }
+  #reader article ul, #reader article ol { margin: 7px 0 7px 20px; }
+  #reader article blockquote { margin: 7px 0; padding: 2px 10px; border-left: 3px solid #4a4a44; color: var(--text-muted); }
+  #reader article pre {
+    background: var(--surface-1); border-radius: 6px; padding: 9px 11px;
+    overflow-x: auto; margin: 8px 0; font-size: 12px;
+  }
+  #reader article code { background: var(--surface-1); border-radius: 4px; padding: 1px 4px; font-size: 12.5px; }
+  #reader article pre code { background: none; padding: 0; }
+  #reader article a { color: var(--accent); text-decoration: none; }
+  #reader article a:hover { text-decoration: underline; }
+  #reader article a.wiki { cursor: pointer; }
+  #reader article a.dead { color: var(--text-muted); cursor: default; }
+  #reader article table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; }
+  #reader article td, #reader article th { border: 1px solid var(--line); padding: 3px 8px; font-size: 12.5px; }
+  #reader article .fm {
+    background: var(--surface-1); border-radius: 6px; padding: 8px 11px;
+    margin-bottom: 10px; font-size: 11.5px; color: var(--text-muted);
+    white-space: pre-wrap; font-family: monospace;
+  }
+  #reader article hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+</style>
+</head>
+<body>
+<div id="left">
+  <div id="graph"></div>
+  <div id="dock">
+    <div id="dockrow1">
+      <div id="results"></div>
+      <input id="search" type="search" placeholder="Search notes…" autocomplete="off">
+      <div id="ego">
+        <b class="name"></b>
+        <span>depth</span><input type="range" min="1" max="4" value="1"><b class="d">1</b>
+        <button class="exit">Exit sub-graph</button>
+      </div>
+      <div id="stats"></div>
+    </div>
+    <div id="types"></div>
+  </div>
+</div>
+<div id="reader">
+  <header>
+    <span class="title">Rhizome</span>
+    <a class="obs" href="#" hidden>Open in Obsidian</a>
+  </header>
+  <div class="path"></div>
+  <article><p class="empty">Click a node to read it here.</p></article>
+</div>
+<script src="vendor/3d-force-graph.min.js"></script>
+<script>
+// Validated dark-mode categorical steps, fixed order; past 8 folds to Other.
+const HUES = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9","#e66767"];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const OTHER = css("--other");
+
+let DATA, typeColor = new Map(), typeOn = new Map(), adj = new Map(), byStem = new Map();
+let focusId = null, depth = 1;
+
+const leftEl = document.getElementById("left");
+const Graph = ForceGraph3D()(document.getElementById("graph"))
+  .backgroundColor(css("--surface-1"))
+  .nodeLabel(n => `${esc(n.name)}<br><span style="color:#8a897f">${esc(n.type)} · ${adj.get(n.id)?.size ?? 0} links</span>`)
+  .nodeColor(n => typeColor.get(n.type) ?? OTHER)
+  .nodeVal(n => 1 + Math.min(10, (adj.get(n.id)?.size ?? 0)))
+  .linkColor(() => "#55544d")
+  .linkOpacity(0.45)
+  .onNodeClick(n => select(n.id))
+  .onBackgroundClick(() => focusId && exitEgo());
+
+function fit() { Graph.width(leftEl.clientWidth).height(leftEl.clientHeight); }
+new ResizeObserver(fit).observe(leftEl);
+
+function esc(s){ const d = document.createElement("i"); d.textContent = s; return d.innerHTML; }
+
+fetch("graph.json").then(r => r.json()).then(data => {
+  DATA = data;
+  for (const n of data.nodes) {
+    const stem = n.id.split("/").pop().replace(/\.md$/, "");
+    byStem.set(stem, n.id);
+    if (!byStem.has(n.name)) byStem.set(n.name, n.id);
+  }
+  for (const l of data.links) {
+    if (!adj.has(l.source)) adj.set(l.source, new Set());
+    if (!adj.has(l.target)) adj.set(l.target, new Set());
+    adj.get(l.source).add(l.target);
+    adj.get(l.target).add(l.source);
+  }
+  // top-8 types by node count take the fixed hue order; the rest fold to Other
+  const counts = new Map();
+  for (const n of data.nodes) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  ranked.forEach(([t], i) => { if (i < HUES.length) typeColor.set(t, HUES[i]); typeOn.set(t, true); });
+  renderChips(ranked);
+  fit();
+  redraw();
+  const deep = new URLSearchParams(location.search).get("open");
+  if (deep && DATA.nodes.some(n => n.id === deep)) select(deep);
+});
+
+function renderChips(ranked) {
+  const box = document.getElementById("types");
+  const top = ranked.slice(0, HUES.length);
+  const restN = ranked.slice(HUES.length).reduce((s, [, n]) => s + n, 0);
+  box.innerHTML = "";
+  for (const [t, n] of top) box.appendChild(chip(t, typeColor.get(t), t, n));
+  if (restN) box.appendChild(chip("__other__", OTHER, `Other (${ranked.length - top.length} types)`, restN));
+}
+
+function chip(key, color, label, n) {
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.innerHTML = `<span class="dot" style="background:${color}"></span><span>${esc(label)}</span><span class="n">${n}</span>`;
+  b.onclick = () => {
+    if (key === "__other__") {
+      const val = !isOtherOn();
+      for (const [t] of typeOn) if (!typeColor.has(t)) typeOn.set(t, val);
+    } else typeOn.set(key, !typeOn.get(key));
+    b.classList.toggle("off");
+    redraw();
+  };
+  return b;
+}
+const isOtherOn = () => [...typeOn].some(([t, v]) => !typeColor.has(t) && v);
+
+function visibleIds() {
+  let keep = new Set(DATA.nodes.filter(n => typeOn.get(n.type)).map(n => n.id));
+  if (focusId) {
+    const ego = new Set([focusId]);
+    let frontier = [focusId];
+    for (let d = 0; d < depth; d++) {
+      const next = [];
+      for (const id of frontier) for (const nb of adj.get(id) ?? [])
+        if (!ego.has(nb)) { ego.add(nb); next.push(nb); }
+      frontier = next;
+    }
+    keep = new Set([...ego].filter(id => keep.has(id) || id === focusId));
+  }
+  return keep;
+}
+
+function redraw() {
+  const keep = visibleIds();
+  const nodes = DATA.nodes.filter(n => keep.has(n.id));
+  const links = DATA.links.filter(l => keep.has(l.source.id ?? l.source) && keep.has(l.target.id ?? l.target));
+  Graph.graphData({ nodes, links });
+  document.getElementById("stats").textContent =
+    `${nodes.length}/${DATA.nodes.length} notes · ${links.length}/${DATA.links.length} links` +
+    (focusId ? ` · depth ${depth}` : "");
+}
+
+function select(id) {
+  focusId = id;
+  const n = DATA.nodes.find(x => x.id === id);
+  const ego = document.getElementById("ego");
+  ego.classList.add("on");
+  ego.querySelector(".name").textContent = n.name;
+  redraw();
+  openNote(id);
+}
+function exitEgo() {
+  focusId = null;
+  document.getElementById("ego").classList.remove("on");
+  redraw();
+}
+document.querySelector("#ego .exit").onclick = exitEgo;
+document.querySelector("#ego input").oninput = e => {
+  depth = +e.target.value;
+  document.querySelector("#ego .d").textContent = depth;
+  redraw();
+};
+
+document.getElementById("search").oninput = e => {
+  const q = e.target.value.trim().toLowerCase();
+  const box = document.getElementById("results");
+  box.innerHTML = "";
+  if (q.length < 2) return;
+  for (const n of DATA.nodes.filter(n => n.name.toLowerCase().includes(q)).slice(0, 15)) {
+    const b = document.createElement("button");
+    b.innerHTML = `${esc(n.name)} <span class="t">· ${esc(n.type)}</span>`;
+    b.onclick = () => { select(n.id); box.innerHTML = ""; };
+    box.appendChild(b);
+  }
+};
+
+/* ---------- reader ---------- */
+const reader = {
+  title: document.querySelector("#reader .title"),
+  obs: document.querySelector("#reader .obs"),
+  path: document.querySelector("#reader .path"),
+  article: document.querySelector("#reader article"),
+};
+
+async function openNote(id) {
+  const r = await fetch(`note?path=${encodeURIComponent(id)}`);
+  if (!r.ok) { reader.article.innerHTML = `<p class="empty">Could not load note.</p>`; return; }
+  const { content } = await r.json();
+  const n = DATA.nodes.find(x => x.id === id);
+  reader.title.textContent = n?.name ?? id;
+  reader.path.textContent = id;
+  reader.obs.hidden = false;
+  reader.obs.href = `obsidian://open?vault=${encodeURIComponent(DATA.vault)}&file=${encodeURIComponent(id.replace(/\.md$/, ""))}`;
+  reader.article.innerHTML = renderMd(content);
+  reader.article.scrollTop = 0;
+  for (const a of reader.article.querySelectorAll("a.wiki")) {
+    a.onclick = ev => { ev.preventDefault(); select(a.dataset.id); };
+  }
+}
+
+// Minimal markdown renderer — everything escaped first, no external libs.
+function renderMd(src) {
+  let fm = "";
+  const fmM = src.match(/^---\n([\s\S]*?)\n---\n/);
+  if (fmM) { fm = fmM[1]; src = src.slice(fmM[0].length); }
+
+  const codeBlocks = [];
+  src = src.replace(/```([\s\S]*?)```/g, (_, body) =>
+    `\x00B${codeBlocks.push(`<pre><code>${esc(body.replace(/^\w*\n/, ""))}</code></pre>`) - 1}\x00`);
+
+  const lines = src.split("\n");
+  const out = [];
+  let inUl = false, inOl = false, inBq = false, para = [];
+  const closeLists = () => {
+    if (para.length) { out.push(`<p>${para.map(inline).join(" ")}</p>`); para = []; }
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+    if (inBq) { out.push("</blockquote>"); inBq = false; }
+  };
+  for (const raw of lines) {
+    const line = raw;
+    let m;
+    if (/^\x00B\d+\x00\s*$/.test(line.trim())) { closeLists(); out.push(line.trim()); continue; }
+    if ((m = line.match(/^(#{1,4})\s+(.*)/))) {
+      closeLists();
+      out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
+    } else if (/^\s*([-*_]){3,}\s*$/.test(line)) {
+      closeLists(); out.push("<hr>");
+    } else if ((m = line.match(/^\s*[-*+]\s+(.*)/))) {
+      if (!inUl) { closeLists(); out.push("<ul>"); inUl = true; }
+      out.push(`<li>${inline(m[1])}</li>`);
+    } else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) {
+      if (!inOl) { closeLists(); out.push("<ol>"); inOl = true; }
+      out.push(`<li>${inline(m[1])}</li>`);
+    } else if ((m = line.match(/^>\s?(.*)/))) {
+      if (!inBq) { closeLists(); out.push("<blockquote>"); inBq = true; }
+      out.push(`<p>${inline(m[1])}</p>`);
+    } else if (line.trim() === "") {
+      closeLists();
+    } else if (inUl || inOl) {
+      // hard-wrapped continuation of the previous list item
+      out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, ` ${inline(line.trim())}</li>`);
+    } else {
+      if (inBq) closeLists();
+      para.push(line.trim());
+    }
+  }
+  closeLists();
+  let html = out.join("\n");
+  html = html.replace(/\x00B(\d+)\x00/g, (_, i) => codeBlocks[i]);
+  return (fm ? `<div class="fm">${esc(fm)}</div>` : "") + html;
+}
+
+function inline(s) {
+  s = esc(s);
+  // wikilinks first: [[target|display]] / [[target]]
+  s = s.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, t, disp) => {
+    const id = byStem.get(t.trim());
+    const label = disp ?? t.trim();
+    return id
+      ? `<a class="wiki" data-id="${esc(id)}">${label}</a>`
+      : `<a class="dead" title="unresolved">${label}</a>`;
+  });
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // md links: internal .md navigates, external opens a tab
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, href) => {
+    if (/^https?:\/\//.test(href)) return `<a href="${href}" target="_blank" rel="noopener">${txt}</a>`;
+    if (href.endsWith(".md")) {
+      const stem = decodeURIComponent(href).split("/").pop().replace(/\.md$/, "").replace(/\s+[0-9a-f]{32}$/, "");
+      const id = byStem.get(decodeURIComponent(href).split("/").pop().replace(/\.md$/, "")) ?? byStem.get(stem);
+      if (id) return `<a class="wiki" data-id="${esc(id)}">${txt}</a>`;
+    }
+    return `<a class="dead">${txt}</a>`;
+  });
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  s = s.replace(/(^|[^*\w])\*([^*]+)\*(?!\w)/g, "$1<i>$2</i>");
+  return s;
+}
+</script>
+</body>
+</html>
