@@ -119,6 +119,10 @@
     white-space: pre-wrap; font-family: monospace;
   }
   #reader article hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+  #reader article .backlinks { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 8px; }
+  #reader article .backlinks h4 { color: var(--text-muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  #reader article .backlinks ul { margin-left: 16px; }
+  #reader article .backlinks .t { color: var(--text-muted); font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -154,6 +158,7 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 const OTHER = css("--other");
 
 let DATA, typeColor = new Map(), typeOn = new Map(), adj = new Map(), byStem = new Map();
+let byId = new Map(), inbound = new Map();
 let focusId = null, depth = 1;
 
 const leftEl = document.getElementById("left");
@@ -178,12 +183,18 @@ fetch("graph.json").then(r => r.json()).then(data => {
     const stem = n.id.split("/").pop().replace(/\.md$/, "");
     byStem.set(stem, n.id);
     if (!byStem.has(n.name)) byStem.set(n.name, n.id);
+    byId.set(n.id, n);
+  }
+  for (const [a, id] of Object.entries(data.aliases ?? {})) {
+    if (!byStem.has(a)) byStem.set(a, id);
   }
   for (const l of data.links) {
     if (!adj.has(l.source)) adj.set(l.source, new Set());
     if (!adj.has(l.target)) adj.set(l.target, new Set());
     adj.get(l.source).add(l.target);
     adj.get(l.target).add(l.source);
+    if (!inbound.has(l.target)) inbound.set(l.target, new Set());
+    inbound.get(l.target).add(l.source);
   }
   // top-8 types by node count take the fixed hue order; the rest fold to Other
   const counts = new Map();
@@ -299,7 +310,15 @@ async function openNote(id) {
   reader.path.textContent = id;
   reader.obs.hidden = false;
   reader.obs.href = `obsidian://open?vault=${encodeURIComponent(DATA.vault)}&file=${encodeURIComponent(id.replace(/\.md$/, ""))}`;
-  reader.article.innerHTML = renderMd(content);
+  const back = [...(inbound.get(id) ?? [])]
+    .map(b => byId.get(b)).filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const backHtml = back.length
+    ? `<div class="backlinks"><h4>Linked from (${back.length})</h4><ul>` +
+      back.map(b => `<li><a class="wiki" data-id="${esc(b.id)}">${esc(b.name)}</a> <span class="t">· ${esc(b.type)}</span></li>`).join("") +
+      `</ul></div>`
+    : "";
+  reader.article.innerHTML = renderMd(content) + backHtml;
   reader.article.scrollTop = 0;
   for (const a of reader.article.querySelectorAll("a.wiki")) {
     a.onclick = ev => { ev.preventDefault(); select(a.dataset.id); };
@@ -325,10 +344,23 @@ function renderMd(src) {
     if (inOl) { out.push("</ol>"); inOl = false; }
     if (inBq) { out.push("</blockquote>"); inBq = false; }
   };
-  for (const raw of lines) {
-    const line = raw;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     let m;
     if (/^\x00B\d+\x00\s*$/.test(line.trim())) { closeLists(); out.push(line.trim()); continue; }
+    // GFM table: |-delimited row followed by a |---| separator row
+    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] ?? "")) {
+      closeLists();
+      const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
+      out.push("<table><thead><tr>" + cells(line).map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>");
+      i++;
+      while (/^\s*\|.*\|\s*$/.test(lines[i + 1] ?? "")) {
+        i++;
+        out.push("<tr>" + cells(lines[i]).map(c => `<td>${c}</td>`).join("") + "</tr>");
+      }
+      out.push("</tbody></table>");
+      continue;
+    }
     if ((m = line.match(/^(#{1,4})\s+(.*)/))) {
       closeLists();
       out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);

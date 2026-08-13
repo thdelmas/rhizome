@@ -19,6 +19,29 @@ EXCLUDE_DIRS = {".git", ".obsidian", "node_modules"}
 NOTION_HEX = re.compile(r"\s+[0-9a-f]{32}$")
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 MDLINK = re.compile(r"\]\(([^)]+?\.md)\)")
+FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.S)
+ALIAS_KEY = re.compile(r"^\s*aliases:\s*(.*)$")
+ALIAS_ITEM = re.compile(r"^\s*-\s+(.+?)\s*$")
+
+
+def parse_aliases(fm: str):
+    """Obsidian-style aliases from frontmatter: inline [a, b] or a - list."""
+    aliases = []
+    lines = fm.split("\n")
+    for i, line in enumerate(lines):
+        m = ALIAS_KEY.match(line)
+        if not m:
+            continue
+        inline = m.group(1).strip()
+        if inline.startswith("[") and inline.endswith("]"):
+            aliases += [a.strip().strip("'\"") for a in inline[1:-1].split(",")]
+        else:
+            for nxt in lines[i + 1:]:
+                lm = ALIAS_ITEM.match(nxt)
+                if not lm:
+                    break
+                aliases.append(lm.group(1).strip("'\""))
+    return [a for a in aliases if a]
 
 
 def build_graph(vault: Path):
@@ -26,9 +49,25 @@ def build_graph(vault: Path):
         p for p in vault.rglob("*.md")
         if not any(part in EXCLUDE_DIRS for part in p.relative_to(vault).parts)
     ]
+    texts = {}
+    for p in files:
+        try:
+            texts[p] = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            texts[p] = ""
+
     by_stem = {}
     for p in files:
         by_stem.setdefault(p.stem, p)
+    # aliases resolve after real stems so a filename always wins over an alias
+    aliases = {}
+    for p in files:
+        fm = FRONTMATTER.match(texts[p])
+        if not fm:
+            continue
+        for a in parse_aliases(fm.group(1)):
+            by_stem.setdefault(a, p)
+            aliases.setdefault(a, str(p.relative_to(vault)))
 
     nodes, links = [], []
     ids = set()
@@ -45,10 +84,7 @@ def build_graph(vault: Path):
 
     for p in files:
         rel = str(p.relative_to(vault))
-        try:
-            text = p.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
+        text = texts[p]
         targets = set()
         for m in WIKILINK.finditer(text):
             t = by_stem.get(m.group(1).strip())
@@ -68,7 +104,7 @@ def build_graph(vault: Path):
         targets.discard(rel)
         links.extend({"source": rel, "target": tr} for tr in targets)
 
-    return {"nodes": nodes, "links": links, "vault": vault.name}
+    return {"nodes": nodes, "links": links, "aliases": aliases, "vault": vault.name}
 
 
 def main():
