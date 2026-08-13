@@ -13,11 +13,16 @@ nothing ever leaves your machine.
 
 - **Live parse** — the graph is rebuilt from the vault on every refresh, no export step.
 - **Sub-graph (ego) views** — click a node, adjust depth, exit back to the full graph.
-- **Type legend as filter** — node type = parent folder; the top types get a
-  CVD-validated categorical palette, the rest fold into "Other"; chips toggle visibility.
-- **Reader panel** — self-contained markdown rendering; wikilinks inside a note
-  navigate the graph; "Open in Obsidian" jumps to the file.
-- **Search** and `?open=path/to/note.md` deep links.
+- **Type legend as filter** — node type = parent folder; the top 24 types get a
+  shape × color encoding (8 CVD-validated hues × 8 node shapes), the rest fold
+  into "Other"; chips toggle visibility.
+- **Orphans chip** — isolate unlinked notes for cleanup.
+- **Reader panel** — self-contained markdown rendering (incl. GFM tables);
+  wikilinks inside a note navigate the graph; a "Linked from" backlinks list
+  under each note; "Open in Obsidian" jumps to the file.
+- **Search** — instant name matches plus full-text hits from the vault —
+  and `?open=path/to/note.md` deep links.
+- Frontmatter `aliases:` resolve in both graph edges and the reader.
 - Notion-export friendly: trailing 32-hex IDs are stripped from display names.
 
 ## Run
@@ -30,11 +35,33 @@ Open http://localhost:8321
 
 No dependencies beyond Python 3.9+ stdlib.
 
-Run it as a background service (systemd):
+To survive reboots, install it as a systemd user service —
+`~/.config/systemd/user/rhizome.service`:
+
+```ini
+[Unit]
+Description=Rhizome KB graph explorer
+
+[Service]
+ExecStart=/usr/bin/python3 /path/to/rhizome/server.py --vault /path/to/vault
+WorkingDirectory=/path/to/rhizome
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
 
 ```
-systemd-run --user --unit=rhizome --working-directory=/path/to/rhizome \
-  python3 server.py --vault /path/to/vault
+systemctl --user daemon-reload && systemctl --user enable --now rhizome
+loginctl enable-linger        # start at boot, not first login
+```
+
+## Tests
+
+```
+python3 -m unittest discover -s tests
+node --test tests/
 ```
 
 ## How it reads the vault

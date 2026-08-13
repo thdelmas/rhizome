@@ -488,12 +488,15 @@ function renderMd(src) {
 
   const lines = src.split("\n");
   const out = [];
-  let inUl = false, inOl = false, inBq = false, para = [];
+  let inUl = false, inOl = false, inBq = false, para = [], bqPara = [];
+  const flushBq = () => {
+    if (bqPara.length) { out.push(`<p>${inline(bqPara.join(" "))}</p>`); bqPara = []; }
+  };
   const closeLists = () => {
-    if (para.length) { out.push(`<p>${para.map(inline).join(" ")}</p>`); para = []; }
+    if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; }
     if (inUl) { out.push("</ul>"); inUl = false; }
     if (inOl) { out.push("</ol>"); inOl = false; }
-    if (inBq) { out.push("</blockquote>"); inBq = false; }
+    if (inBq) { flushBq(); out.push("</blockquote>"); inBq = false; }
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -525,7 +528,7 @@ function renderMd(src) {
       out.push(`<li>${inline(m[1])}</li>`);
     } else if ((m = line.match(/^>\s?(.*)/))) {
       if (!inBq) { closeLists(); out.push("<blockquote>"); inBq = true; }
-      out.push(`<p>${inline(m[1])}</p>`);
+      if (m[1].trim() === "") flushBq(); else bqPara.push(m[1].trim());
     } else if (line.trim() === "") {
       closeLists();
     } else if (inUl || inOl) {
@@ -563,7 +566,7 @@ function inline(s) {
     }
     return `<a class="dead">${txt}</a>`;
   });
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  s = s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
   s = s.replace(/(^|[^*\w])\*([^*]+)\*(?!\w)/g, "$1<i>$2</i>");
   return s;
 }
