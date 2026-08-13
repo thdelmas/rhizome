@@ -8,6 +8,7 @@ the JS lib is vendored, the graph is parsed live from the vault on each
 Usage: python3 server.py --vault /path/to/vault [--port N]
 """
 import argparse
+import csv
 import json
 import re
 import urllib.parse
@@ -20,6 +21,8 @@ NOTION_HEX = re.compile(r"\s+[0-9a-f]{32}$")
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 MDLINK = re.compile(r"\]\(([^)]+?\.md)\)")
 FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.S)
+CSV_DB = re.compile(r"^(.*?)\s+[0-9a-f]{32}(_all)?$")
+CSV_RELPATH = re.compile(r"\(([^()]+?\.md)\)")
 ALIAS_KEY = re.compile(r"^\s*aliases:\s*(.*)$")
 ALIAS_ITEM = re.compile(r"^\s*-\s+(.+?)\s*$")
 
@@ -42,6 +45,70 @@ def parse_aliases(fm: str):
                     break
                 aliases.append(lm.group(1).strip("'\""))
     return [a for a in aliases if a]
+
+
+def csv_edges(vault: Path, ids: set):
+    """Typed edges from Notion-export database CSVs, read-only.
+
+    A database exports as '<Name> <32hex>[_all].csv' beside a plain '<Name>/'
+    dir holding one .md per row. Relation cells hold 'Title (url%20encoded/path.md)'
+    entries; the edge kind is the column name. Nothing in the vault is modified.
+    """
+    picked = {}
+    for p in vault.rglob("*.csv"):
+        if any(part in EXCLUDE_DIRS for part in p.relative_to(vault).parts):
+            continue
+        m = CSV_DB.match(p.stem)
+        if not m:
+            continue
+        key = (str(p.parent), m.group(1))
+        if key not in picked or p.stem.endswith("_all"):  # _all holds every row
+            picked[key] = p
+
+    links = []
+    for (_, base), p in sorted(picked.items()):
+        rowdir = p.parent / base
+        if not rowdir.is_dir():
+            continue
+        by_title, dups = {}, set()
+        for f in rowdir.glob("*.md"):
+            t = NOTION_HEX.sub("", f.stem)
+            if t in by_title:
+                dups.add(t)
+            else:
+                by_title[t] = str(f.relative_to(vault))
+        for t in dups:
+            by_title.pop(t, None)
+        try:
+            with p.open(encoding="utf-8-sig", newline="") as fh:
+                reader = csv.DictReader(fh)
+                if not reader.fieldnames:
+                    continue
+                title_col = reader.fieldnames[0]
+                for row in reader:
+                    src = by_title.get((row.get(title_col) or "").strip())
+                    if not src:
+                        continue
+                    for col, cell in row.items():
+                        if col == title_col or not cell:
+                            continue
+                        for pm in CSV_RELPATH.finditer(cell):
+                            raw = urllib.parse.unquote(pm.group(1))
+                            for anc in [p.parent, *p.parent.parents]:
+                                cand = (anc / raw).resolve()
+                                try:
+                                    tr = str(cand.relative_to(vault.resolve()))
+                                except ValueError:
+                                    break  # escaped the vault
+                                if cand.is_file():
+                                    if tr in ids and tr != src:
+                                        links.append({"source": src, "target": tr, "kind": col})
+                                    break
+                                if anc == vault:
+                                    break
+        except (OSError, csv.Error):
+            continue
+    return links
 
 
 def build_graph(vault: Path):
@@ -103,6 +170,16 @@ def build_graph(vault: Path):
                 targets.add(tr)
         targets.discard(rel)
         links.extend({"source": rel, "target": tr} for tr in targets)
+
+    # typed edges from Notion CSVs; on a duplicate pair the typed edge wins
+    typed, seen_typed = [], set()
+    for l in csv_edges(vault, ids):
+        k = (l["source"], l["target"], l["kind"])
+        if k not in seen_typed:
+            seen_typed.add(k)
+            typed.append(l)
+    typed_pairs = {(l["source"], l["target"]) for l in typed}
+    links = [l for l in links if (l["source"], l["target"]) not in typed_pairs] + typed
 
     return {"nodes": nodes, "links": links, "aliases": aliases, "vault": vault.name}
 

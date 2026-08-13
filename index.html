@@ -164,7 +164,7 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 const OTHER = css("--other");
 
 let DATA, typeStyle = new Map(), typeOn = new Map(), adj = new Map(), byStem = new Map();
-let byId = new Map(), inbound = new Map();
+let byId = new Map(), inbound = new Map(), kindColor = new Map();
 let focusId = null, depth = 1, orphansOnly = false;
 
 const leftEl = document.getElementById("left");
@@ -173,8 +173,9 @@ const Graph = ForceGraph3D()(document.getElementById("graph"))
   .nodeLabel(n => `${esc(n.name)}<br><span style="color:#8a897f">${esc(n.type)} · ${adj.get(n.id)?.size ?? 0} links</span>`)
   .nodeColor(n => typeStyle.get(n.type)?.color ?? OTHER)
   .nodeVal(n => 1 + Math.min(10, (adj.get(n.id)?.size ?? 0)))
-  .linkColor(() => "#55544d")
+  .linkColor(l => kindColor.get(l.kind) ?? "#55544d")
   .linkOpacity(0.45)
+  .linkLabel(l => l.kind ? esc(l.kind) : "")
   .onNodeClick(n => select(n.id))
   .onBackgroundClick(() => focusId && exitEgo());
 
@@ -306,6 +307,11 @@ fetch("graph.json").then(r => r.json()).then(data => {
     if (!inbound.has(l.target)) inbound.set(l.target, new Set());
     inbound.get(l.target).add(l.source);
   }
+  // top edge kinds by count share the hue order; the rest stay neutral
+  const kindCounts = new Map();
+  for (const l of data.links) if (l.kind) kindCounts.set(l.kind, (kindCounts.get(l.kind) ?? 0) + 1);
+  [...kindCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, HUES.length)
+    .forEach(([k], i) => kindColor.set(k, HUES[i]));
   // top types by node count take color i%8 + shape i/8; the rest fold to Other
   const counts = new Map();
   for (const n of data.nodes) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);

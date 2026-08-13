@@ -23,6 +23,8 @@ nothing ever leaves your machine.
 - **Search** — instant name matches plus full-text hits from the vault —
   and `?open=path/to/note.md` deep links.
 - Frontmatter `aliases:` resolve in both graph edges and the reader.
+- **Typed edges from Notion database CSVs** — relation columns become labeled
+  edges (hover shows the kind; top kinds colored), read-only, no vault changes.
 - Notion-export friendly: trailing 32-hex IDs are stripped from display names.
 
 ## Run
@@ -72,8 +74,8 @@ node --test tests/
 
 ## Roadmap
 
-- Typed relations from frontmatter keys (`client:`, `project:`, …) → labeled,
-  filterable edge kinds.
+- Typed relations from frontmatter keys (`client:`, `project:`, …), joining the
+  CSV-derived kinds; filterable edge kinds.
 - 2D mode for reading-oriented sessions.
 
 ## License

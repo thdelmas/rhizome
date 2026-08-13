@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from server import build_graph, parse_aliases, search_vault
+from server import build_graph, csv_edges, parse_aliases, search_vault
 
 
 class ParseAliases(unittest.TestCase):
@@ -62,6 +62,61 @@ class BuildGraphTest(unittest.TestCase):
     def test_aliases_shipped(self):
         g = build_graph(self.vault)
         self.assertEqual(g["aliases"], {"ay": "a.md"})
+
+
+class CsvEdgesTest(unittest.TestCase):
+    HEX = "a" * 32
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vault = Path(self.tmp.name)
+        works = self.vault / "Works"
+        (works / "Tasks").mkdir(parents=True)
+        (works / "Projects").mkdir()
+        (works / "Tasks" / f"My Task {self.HEX}.md").write_text("body\n")
+        (works / "Projects" / f"Proj X {self.HEX}.md").write_text("body\n")
+        # _all.csv preferred over the plain twin, which here is a decoy subset
+        (works / f"Tasks {self.HEX}.csv").write_text("Task name,Project\n")
+        (works / f"Tasks {self.HEX}_all.csv").write_text(
+            "Task name,Project\n"
+            f'My Task,Proj X (Works/Projects/Proj%20X%20{self.HEX}.md)\n'
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def ids(self):
+        return {
+            f"Works/Tasks/My Task {self.HEX}.md",
+            f"Works/Projects/Proj X {self.HEX}.md",
+        }
+
+    def test_typed_edge_from_relation_column(self):
+        links = csv_edges(self.vault, self.ids())
+        self.assertEqual(links, [{
+            "source": f"Works/Tasks/My Task {self.HEX}.md",
+            "target": f"Works/Projects/Proj X {self.HEX}.md",
+            "kind": "Project",
+        }])
+
+    def test_traversal_paths_ignored(self):
+        (self.vault / "Works" / f"Evil {self.HEX}_all.csv").write_text(
+            "Name,Rel\nMy Task,x (../../../etc/passwd.md)\n"
+        )
+        (self.vault / "Works" / "Evil").mkdir()
+        for l in csv_edges(self.vault, self.ids()):
+            self.assertFalse(l["target"].startswith(".."))
+
+    def test_build_graph_merges_typed_over_prose(self):
+        # prose wikilink between the same pair: typed edge must win, no dup
+        (self.vault / "Works" / "Tasks" / f"My Task {self.HEX}.md").write_text(
+            f"[[Proj X {self.HEX}]]\n"
+        )
+        g = build_graph(self.vault)
+        pairs = [(l["source"], l["target"]) for l in g["links"]]
+        self.assertEqual(len(pairs), len(set(pairs)))
+        typed = [l for l in g["links"] if l.get("kind")]
+        self.assertEqual(len(typed), 1)
 
 
 class SearchTest(unittest.TestCase):
