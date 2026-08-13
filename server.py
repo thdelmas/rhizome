@@ -107,6 +107,36 @@ def build_graph(vault: Path):
     return {"nodes": nodes, "links": links, "aliases": aliases, "vault": vault.name}
 
 
+def search_vault(vault: Path, query: str, limit: int = 40):
+    """Case-insensitive full-text search; first matching line per file."""
+    q = query.lower()
+    hits = []
+    for p in vault.rglob("*.md"):
+        if any(part in EXCLUDE_DIRS for part in p.relative_to(vault).parts):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        idx = text.lower().find(q)
+        if idx == -1:
+            continue
+        start = text.rfind("\n", 0, idx) + 1
+        end = text.find("\n", idx)
+        line = text[start:end if end != -1 else len(text)].strip()
+        if len(line) > 140:
+            cut = max(0, idx - start - 40)
+            line = ("…" if cut else "") + line[cut:cut + 140] + "…"
+        hits.append({
+            "path": str(p.relative_to(vault)),
+            "line": text.count("\n", 0, idx) + 1,
+            "snippet": line,
+        })
+        if len(hits) >= limit:
+            break
+    return {"hits": hits}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vault", type=Path, default=DEFAULT_VAULT)
@@ -130,6 +160,10 @@ def main():
             route = self.path.split("?")[0]
             if route == "/graph.json":
                 self.send_json(build_graph(args.vault))
+            elif route == "/search":
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                q = qs.get("q", [""])[0].strip()
+                self.send_json(search_vault(args.vault, q) if len(q) >= 2 else {"hits": []})
             elif route == "/note":
                 qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 rel = qs.get("path", [""])[0]

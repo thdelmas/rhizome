@@ -71,8 +71,11 @@
   }
   .chip:hover { background: var(--surface-1); }
   .chip.off { opacity: 0.32; }
-  .chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .chip .glyph { font-size: 10px; line-height: 1; flex: none; }
   .chip .n { color: var(--text-muted); font-size: 11.5px; }
+  .chip.orphan { border: 1px solid var(--line); }
+  .chip.orphan.on { border-color: var(--accent); color: var(--text-primary); }
+  #results .snip { display: block; color: var(--text-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ---- right: reader ---- */
   #reader {
@@ -152,20 +155,23 @@
 </div>
 <script src="vendor/3d-force-graph.min.js"></script>
 <script>
-// Validated dark-mode categorical steps, fixed order; past 8 folds to Other.
+// Validated dark-mode categorical steps, fixed order. Types rank by size:
+// rank i gets color i%8 + shape i/8, so 24 types stay distinguishable; rest fold to Other.
 const HUES = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9","#e66767"];
+const GLYPHS = ["●","■","◆","▲","⬢","⬟","✚","▰"];  // sphere, cube, octa, tetra, hex prism, pyramid, cross, tri prism
+const MAX_TYPES = 24;
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const OTHER = css("--other");
 
-let DATA, typeColor = new Map(), typeOn = new Map(), adj = new Map(), byStem = new Map();
+let DATA, typeStyle = new Map(), typeOn = new Map(), adj = new Map(), byStem = new Map();
 let byId = new Map(), inbound = new Map();
-let focusId = null, depth = 1;
+let focusId = null, depth = 1, orphansOnly = false;
 
 const leftEl = document.getElementById("left");
 const Graph = ForceGraph3D()(document.getElementById("graph"))
   .backgroundColor(css("--surface-1"))
   .nodeLabel(n => `${esc(n.name)}<br><span style="color:#8a897f">${esc(n.type)} · ${adj.get(n.id)?.size ?? 0} links</span>`)
-  .nodeColor(n => typeColor.get(n.type) ?? OTHER)
+  .nodeColor(n => typeStyle.get(n.type)?.color ?? OTHER)
   .nodeVal(n => 1 + Math.min(10, (adj.get(n.id)?.size ?? 0)))
   .linkColor(() => "#55544d")
   .linkOpacity(0.45)
@@ -177,6 +183,110 @@ new ResizeObserver(fit).observe(leftEl);
 
 function esc(s){ const d = document.createElement("i"); d.textContent = s; return d.innerHTML; }
 
+/* ---------- node shapes ----------
+   The vendored bundle keeps THREE internal, so constructors are extracted from a
+   probe node's default mesh (Mesh via clone(), BufferGeometry via the prototype
+   chain). If the probe never materializes we fall back to default spheres. */
+let T = null;
+const geomCache = new Map(), matCache = new Map();
+
+function face(arr, ...v) { // convex planar polygon, origin inside the solid: orient outward, fan-triangulate
+  const [a, b, c] = v;
+  const u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]], w = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
+  const n = [u[1]*w[2]-u[2]*w[1], u[2]*w[0]-u[0]*w[2], u[0]*w[1]-u[1]*w[0]];
+  const ctr = [0, 1, 2].map(k => v.reduce((s, p) => s + p[k], 0) / v.length);
+  if (n[0]*ctr[0] + n[1]*ctr[1] + n[2]*ctr[2] < 0) v.reverse();
+  for (let i = 1; i + 1 < v.length; i++) arr.push(...v[0], ...v[i], ...v[i + 1]);
+}
+function box(arr, hx, hy, hz, ox = 0, oy = 0, oz = 0) {
+  const c = (sx, sy, sz) => [sx*hx+ox, sy*hy+oy, sz*hz+oz];
+  face(arr, c(1,-1,-1), c(1,1,-1), c(1,1,1), c(1,-1,1));
+  face(arr, c(-1,-1,-1), c(-1,1,-1), c(-1,1,1), c(-1,-1,1));
+  face(arr, c(-1,1,-1), c(1,1,-1), c(1,1,1), c(-1,1,1));
+  face(arr, c(-1,-1,-1), c(1,-1,-1), c(1,-1,1), c(-1,-1,1));
+  face(arr, c(-1,-1,1), c(1,-1,1), c(1,1,1), c(-1,1,1));
+  face(arr, c(-1,-1,-1), c(1,-1,-1), c(1,1,-1), c(-1,1,-1));
+}
+function prism(arr, sides, r, hy) { // n-gonal prism: two caps + side quads
+  const ring = y => Array.from({length: sides}, (_, i) => {
+    const a = (i / sides) * 2 * Math.PI + Math.PI / sides;
+    return [r * Math.cos(a), y, r * Math.sin(a)];
+  });
+  const top = ring(hy), bot = ring(-hy);
+  face(arr, ...top); face(arr, ...bot);
+  for (let i = 0; i < sides; i++) {
+    const j = (i + 1) % sides;
+    face(arr, top[i], top[j], bot[j], bot[i]);
+  }
+}
+const SHAPE_BUILDERS = [
+  null, // sphere — uses the real SphereGeometry
+  arr => box(arr, 0.72, 0.72, 0.72),
+  arr => { const V = s => s * 1.05; // octahedron
+    for (const sx of [1,-1]) for (const sy of [1,-1]) for (const sz of [1,-1])
+      face(arr, [V(sx),0,0], [0,V(sy),0], [0,0,V(sz)]); },
+  arr => { const s = 0.8, v = [[s,s,s],[s,-s,-s],[-s,s,-s],[-s,-s,s]]; // tetrahedron
+    face(arr, v[0], v[1], v[2]); face(arr, v[0], v[3], v[1]);
+    face(arr, v[0], v[2], v[3]); face(arr, v[1], v[3], v[2]); },
+  arr => prism(arr, 6, 0.85, 0.55),
+  arr => { const s = 0.95, y = -0.55, apex = [0, 0.95, 0]; // square pyramid
+    const b = [[-s,y,-s],[s,y,-s],[s,y,s],[-s,y,s]];
+    face(arr, ...b);
+    for (let i = 0; i < 4; i++) face(arr, b[i], b[(i+1)%4], apex); },
+  arr => { box(arr, 1.05, 0.32, 0.32); box(arr, 0.32, 1.05, 0.32); box(arr, 0.32, 0.32, 1.05); }, // cross
+  arr => prism(arr, 3, 1.0, 0.5),
+];
+function geomFor(shape) {
+  if (!geomCache.has(shape)) {
+    if (!shape) geomCache.set(shape, new T.SphereGeometry(1, 12, 8));
+    else {
+      const arr = [];
+      SHAPE_BUILDERS[shape](arr);
+      const g = new T.BufferGeometry();
+      g.setAttribute("position", new T.Attr(new Float32Array(arr), 3));
+      g.computeVertexNormals();
+      geomCache.set(shape, g);
+    }
+  }
+  return geomCache.get(shape);
+}
+function matFor(color) {
+  if (!matCache.has(color)) {
+    const m = T.template.material.clone();
+    m.color.set(color);
+    matCache.set(color, m);
+  }
+  return matCache.get(color);
+}
+function meshFor(n) {
+  if (!T) return false; // default sphere
+  const st = typeStyle.get(n.type);
+  const m = T.template.clone();
+  m.geometry = geomFor(st?.shape ?? 0);
+  m.material = matFor(st?.color ?? OTHER);
+  m.scale.setScalar(Math.cbrt(1 + Math.min(10, adj.get(n.id)?.size ?? 0)) * 4);
+  return m;
+}
+
+Graph.graphData({ nodes: [{ id: "__probe__", name: "", type: "" }], links: [] });
+(function grabTHREE(tries) {
+  const probe = Graph.graphData().nodes[0];
+  if (probe?.__threeObj?.geometry) {
+    const mesh = probe.__threeObj;
+    T = {
+      template: mesh.clone(),
+      SphereGeometry: mesh.geometry.constructor,
+      BufferGeometry: Object.getPrototypeOf(mesh.geometry.constructor),
+      Attr: mesh.geometry.attributes.position.constructor,
+    };
+    T.template.scale.setScalar(1);
+    Graph.nodeThreeObject(meshFor);
+    start();
+  } else if (tries < 90) requestAnimationFrame(() => grabTHREE(tries + 1));
+  else start(); // shapes unavailable — color-only spheres
+})(0);
+
+function start() {
 fetch("graph.json").then(r => r.json()).then(data => {
   DATA = data;
   for (const n of data.nodes) {
@@ -196,45 +306,65 @@ fetch("graph.json").then(r => r.json()).then(data => {
     if (!inbound.has(l.target)) inbound.set(l.target, new Set());
     inbound.get(l.target).add(l.source);
   }
-  // top-8 types by node count take the fixed hue order; the rest fold to Other
+  // top types by node count take color i%8 + shape i/8; the rest fold to Other
   const counts = new Map();
   for (const n of data.nodes) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  ranked.forEach(([t], i) => { if (i < HUES.length) typeColor.set(t, HUES[i]); typeOn.set(t, true); });
+  ranked.forEach(([t], i) => {
+    if (i < MAX_TYPES) {
+      const shape = Math.floor(i / HUES.length);
+      typeStyle.set(t, { color: HUES[i % HUES.length], shape, glyph: GLYPHS[shape] });
+    }
+    typeOn.set(t, true);
+  });
   renderChips(ranked);
   fit();
   redraw();
   const deep = new URLSearchParams(location.search).get("open");
   if (deep && DATA.nodes.some(n => n.id === deep)) select(deep);
 });
+}
 
 function renderChips(ranked) {
   const box = document.getElementById("types");
-  const top = ranked.slice(0, HUES.length);
-  const restN = ranked.slice(HUES.length).reduce((s, [, n]) => s + n, 0);
+  const top = ranked.slice(0, MAX_TYPES);
+  const restN = ranked.slice(MAX_TYPES).reduce((s, [, n]) => s + n, 0);
   box.innerHTML = "";
-  for (const [t, n] of top) box.appendChild(chip(t, typeColor.get(t), t, n));
-  if (restN) box.appendChild(chip("__other__", OTHER, `Other (${ranked.length - top.length} types)`, restN));
+  for (const [t, n] of top) {
+    const st = typeStyle.get(t);
+    box.appendChild(chip(t, st.color, st.glyph, t, n));
+  }
+  if (restN) box.appendChild(chip("__other__", OTHER, "●", `Other (${ranked.length - top.length} types)`, restN));
+  const orphanN = DATA.nodes.filter(n => !(adj.get(n.id)?.size)).length;
+  if (orphanN) {
+    const b = document.createElement("button");
+    b.className = "chip orphan";
+    b.title = "Show only unlinked notes";
+    b.innerHTML = `<span class="glyph">◌</span><span>Orphans</span><span class="n">${orphanN}</span>`;
+    b.onclick = () => { orphansOnly = !orphansOnly; b.classList.toggle("on", orphansOnly); redraw(); };
+    box.appendChild(b);
+  }
 }
 
-function chip(key, color, label, n) {
+function chip(key, color, glyph, label, n) {
   const b = document.createElement("button");
   b.className = "chip";
-  b.innerHTML = `<span class="dot" style="background:${color}"></span><span>${esc(label)}</span><span class="n">${n}</span>`;
+  b.innerHTML = `<span class="glyph" style="color:${color}">${glyph}</span><span>${esc(label)}</span><span class="n">${n}</span>`;
   b.onclick = () => {
     if (key === "__other__") {
       const val = !isOtherOn();
-      for (const [t] of typeOn) if (!typeColor.has(t)) typeOn.set(t, val);
+      for (const [t] of typeOn) if (!typeStyle.has(t)) typeOn.set(t, val);
     } else typeOn.set(key, !typeOn.get(key));
     b.classList.toggle("off");
     redraw();
   };
   return b;
 }
-const isOtherOn = () => [...typeOn].some(([t, v]) => !typeColor.has(t) && v);
+const isOtherOn = () => [...typeOn].some(([t, v]) => !typeStyle.has(t) && v);
 
 function visibleIds() {
   let keep = new Set(DATA.nodes.filter(n => typeOn.get(n.type)).map(n => n.id));
+  if (orphansOnly) keep = new Set([...keep].filter(id => !(adj.get(id)?.size)));
   if (focusId) {
     const ego = new Set([focusId]);
     let frontier = [focusId];
@@ -256,7 +386,7 @@ function redraw() {
   Graph.graphData({ nodes, links });
   document.getElementById("stats").textContent =
     `${nodes.length}/${DATA.nodes.length} notes · ${links.length}/${DATA.links.length} links` +
-    (focusId ? ` · depth ${depth}` : "");
+    (focusId ? ` · depth ${depth}` : "") + (orphansOnly ? " · orphans only" : "");
 }
 
 function select(id) {
@@ -280,17 +410,38 @@ document.querySelector("#ego input").oninput = e => {
   redraw();
 };
 
+let searchTimer;
 document.getElementById("search").oninput = e => {
   const q = e.target.value.trim().toLowerCase();
   const box = document.getElementById("results");
   box.innerHTML = "";
+  clearTimeout(searchTimer);
   if (q.length < 2) return;
-  for (const n of DATA.nodes.filter(n => n.name.toLowerCase().includes(q)).slice(0, 15)) {
+  const hit = (html, id) => {
     const b = document.createElement("button");
-    b.innerHTML = `${esc(n.name)} <span class="t">· ${esc(n.type)}</span>`;
-    b.onclick = () => { select(n.id); box.innerHTML = ""; };
+    b.innerHTML = html;
+    b.onclick = () => { select(id); box.innerHTML = ""; };
     box.appendChild(b);
+    return b;
+  };
+  const shown = new Set();
+  for (const n of DATA.nodes.filter(n => n.name.toLowerCase().includes(q)).slice(0, 8)) {
+    hit(`${esc(n.name)} <span class="t">· ${esc(n.type)}</span>`, n.id);
+    shown.add(n.id);
   }
+  // full-text pass, debounced; results append under the name matches
+  searchTimer = setTimeout(async () => {
+    const r = await fetch(`search?q=${encodeURIComponent(q)}`).catch(() => null);
+    if (!r?.ok || document.getElementById("search").value.trim().toLowerCase() !== q) return;
+    const { hits } = await r.json();
+    for (const h of hits) {
+      if (shown.has(h.path) || !byId.has(h.path)) continue;
+      const n = byId.get(h.path);
+      hit(`${esc(n.name)} <span class="t">· ${esc(n.type)}:${h.line}</span><span class="snip">${esc(h.snippet)}</span>`, h.path);
+      shown.add(h.path);
+      if (shown.size >= 18) break;
+    }
+  }, 250);
 };
 
 /* ---------- reader ---------- */
