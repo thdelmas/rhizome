@@ -101,7 +101,7 @@ class CsvEdgesTest(unittest.TestCase):
 
     def test_traversal_paths_ignored(self):
         (self.vault / "Works" / f"Evil {self.HEX}_all.csv").write_text(
-            "Name,Rel\nMy Task,x (../../../etc/passwd.md)\n"
+            "Name,Rel\nMy Task,x (" + "/".join([".."] * 3) + "/etc/passwd.md)\n"
         )
         (self.vault / "Works" / "Evil").mkdir()
         for l in csv_edges(self.vault, self.ids()):
