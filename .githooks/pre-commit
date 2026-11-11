@@ -1,0 +1,10 @@
+#!/bin/sh
+# Committed pre-commit hook: references outside this repository are refused (paths that resolve
+# above the repo root, machine paths, secret values). Activate once per clone:
+#   git config core.hooksPath .githooks
+# Any hook previously installed in .git/hooks still runs after it.
+top=$(git rev-parse --show-toplevel)
+python3 "$top/.githooks/leakcheck.py" --staged ${LEAKCHECK_STRICT:-} || exit 1
+local_hook="$(git rev-parse --git-dir)/hooks/pre-commit"
+[ -x "$local_hook" ] && exec "$local_hook" "$@"
+exit 0
